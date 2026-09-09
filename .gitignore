@@ -1,0 +1,6 @@
+.build/
+dist/
+.DS_Store
+local-results/
+__pycache__/
+.local-signing-identity
