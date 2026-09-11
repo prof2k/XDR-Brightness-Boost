@@ -1,6 +1,6 @@
 # Release preparation
 
-The current app is an experimental preview with a narrow built-in compatibility allowlist. Preparing the source does not certify production compatibility.
+The current app is an experimental preview with capability-based built-in XDR detection. Preparing the source does not certify production compatibility.
 
 ## Before publishing source
 
@@ -14,7 +14,7 @@ The current app is an experimental preview with a narrow built-in compatibility 
 
 - Set version/build metadata consistently for the app and controller in `Scripts/build.sh`.
 - Test launch and fallback UI on macOS 11, 12, 13, 14, and later versions. The deployment target is 11.0; compilation alone does not validate older runtime behavior.
-- Validate the target Mac/OS combinations before changing the native-panel allowlist.
+- Validate capability detection and activation on the Mac/display combinations available; report tested hardware without adding model/build allowlists.
 - Test real brightness keys, permission denial, login registration, sleep/wake, hotplug, external targeting, and recovery on the signed release candidate.
 - Prepare a Developer ID distribution process including hardened-runtime compatibility, notarization, stapling, and a Gatekeeper check on a clean Mac. The current script supports local code signing only; it does not implement this distribution process.
 - Keep the exact verified bundle and record its checksums and validation environment.

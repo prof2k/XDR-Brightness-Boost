@@ -2,7 +2,7 @@
 
 A native macOS menu-bar app for built-in XDR brightness boost and external-display brightness control.
 
-**Experimental, version 0.7.19 (99).** Targets Apple silicon and **macOS Big Sur 11 or later**. Runtime validation has so far been performed on macOS 27; older versions still need on-device testing. Built-in XDR control currently accepts only **MacBookPro18,3 on macOS build 26A5416b**. Other models and OS builds are intentionally rejected by that engine. This is not yet a broadly validated production release.
+**Experimental, version 0.7.20 (100).** Targets Apple silicon and **macOS Big Sur 11 or later**. Runtime validation has so far been performed on macOS 27; older versions still need on-device testing. Built-in XDR boost is detected from the display’s potential extended dynamic range, with **no Mac model, macOS build, or panel-resolution allowlist**. This enables eligible Liquid Retina XDR displays on M1 Pro/Max and later MacBook Pro models without adding each model to the code. Actual behavior on other machines still needs on-device validation. This is not yet a broadly validated production release.
 
 ## Features
 
@@ -15,7 +15,7 @@ A native macOS menu-bar app for built-in XDR brightness boost and external-displ
 
 The percentage is a control scale, not measured luminance. Above 100%, the built-in engine extends the color transfer curve while retaining the Apple XDR preset. Enabling boost recalls the saved target (initially 160%). Brightness keys and dragging can cross 100% to enable boost automatically. Lowering brightness leaves the toggle on; switching it off returns to at most 100%, and the next upward keypress can enable boost again. Unsupported displays remain capped at 100%. In Settings, **Keys can enable boost** (on by default) controls whether keys may cross 100% while boost is off. Turn it off to make keys respect the main toggle; dragging above 100% still enables boost.
 
-External adjustments combine hardware brightness, where supported, with gamma scaling. For example, 50% requests 50% hardware brightness and a 0.5 color-table multiplier. Software dimming does not turn off the backlight. External XDR boost and independent mirrored-display control are unsupported. Original M1 Macs do not have built-in XDR panels; running on these Macs does not enable built-in XDR boost.
+External adjustments combine hardware brightness, where supported, with gamma scaling. For example, 50% requests 50% hardware brightness and a 0.5 color-table multiplier. Software dimming does not turn off the backlight. External XDR boost and independent mirrored-display control are unsupported by the current external-display backend. Original M1 Macs do not have built-in XDR panels; running on these Macs does not enable built-in XDR boost.
 
 ## Build and install
 
@@ -40,7 +40,7 @@ The installer checks that certificate-signed updates satisfy the installed app�
 
 ## Usage and compatibility
 
-Open the sun icon in the menu bar. Choose a display, then adjust its slider. On the supported built-in panel, select **Apple XDR Display (P3-1600 nits)** in macOS and turn automatic brightness off before enabling boost.
+Open the sun icon in the menu bar. Choose a display, then adjust its slider. On a built-in XDR panel, use an HDR-capable preset that permits brightness adjustment (such as **Apple XDR Display**) and turn automatic brightness off before enabling boost. Preset eligibility is read from its HDR/SDR luminance metadata, not a hardcoded preset number. Ordinary built-in displays keep native 0–100% brightness control and show **XDR boost unsupported**. A Mac without an internal display can still use external-display control.
 
 Brightness-key control starts automatically while the app runs. Settings shows a compact permission warning with **Open Settings** only when access is missing, or **Retry** if permission exists but capture fails. The **Keys can enable boost** preference stays dimmed with a grayscale switch until capture is ready; its saved choice is retained. Settings also provides start on login on macOS 13 or later. On macOS 11–12, add the app manually in System Preferences → Users & Groups → Login Items. The HUD uses native blur before macOS 26, and animated numeric transitions require macOS 14. Grant the requested macOS access for key capture. If the event tap cannot run, macOS continues handling the keys. An enabled permission entry alone does not prove key capture works.
 

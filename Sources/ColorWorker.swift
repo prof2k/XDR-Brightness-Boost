@@ -4,6 +4,7 @@ import Darwin
 private struct ColorSession: Codable {
     let identity: String
     let display: UInt32
+    let originalPreset: Int?
     let originalBrightness: Float
     let original: ColorCurve
     var expected: ColorCurve?
@@ -14,7 +15,10 @@ private struct ColorSession: Codable {
 @MainActor
 final class ColorBrightnessWorker {
     private static let journal = BrightnessWorker.support.appendingPathComponent("color-recovery.json")
-    private var panel: XDRNativePanel!
+    private var panel: XDRNativePanel?
+    private var nextPanelProbe = 0.0
+    private var lastKnownSupportsBoost = false
+    private var lastReportedNativeAvailable: Bool?
     private var session: ColorSession?
     private let anchor = ColorEDRAnchor()
     private let externalGamma = ExternalGamma()
@@ -51,7 +55,7 @@ final class ColorBrightnessWorker {
             lockFD = open(BrightnessWorker.support.appendingPathComponent("control.lock").path, O_CREAT | O_RDWR, 0o600)
             guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw XDRFailure.message("Another brightness session is active.") }
             try externalGamma.recover()
-            panel = try XDRNativePanel.open()
+            panel = try? XDRNativePanel.open()
             if FileManager.default.fileExists(atPath: Self.journal.path) {
                 session = try JSONDecoder().decode(ColorSession.self, from: Data(contentsOf: Self.journal))
                 guard session!.original.isValid, session!.expected?.isValid != false, session!.previous?.isValid != false else {
@@ -60,8 +64,8 @@ final class ColorBrightnessWorker {
                 try restore()
             }
             if recoverOnly { send("off", "Recovery completed."); exit(0) }
-            if let state = panel.readBrightnessState(), let value = state["brightness"] as? Double { percentage = value * 100 }
-            send("off", "Ready. Apple XDR preset stays unchanged.")
+            if let state = panel?.readBrightnessState(), let value = state["brightness"] as? Double { percentage = value * 100 }
+            send("off", panel == nil ? "No native built-in brightness control. External displays remain available." : "Ready. Display preset stays unchanged.")
             FileHandle.standardInput.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 if data.isEmpty { handle.readabilityHandler = nil }
@@ -149,7 +153,7 @@ final class ColorBrightnessWorker {
             case "set": if let value = command["percentage"] as? Double { set(value, activate: command["activate"] as? Bool ?? false) }
             case "adjust":
                 if let direction = command["direction"] as? Int, [-1, 1].contains(direction) {
-                    let next = ControlPolicy.keyTarget(ramping ? percentage : (observedPercentage() ?? percentage), direction: direction, fine: command["fine"] as? Bool ?? false, supportsBoost: true, boostEnabled: boostEnabled, allowBoostActivation: command["allowBoostActivation"] as? Bool ?? false)
+                    let next = ControlPolicy.keyTarget(ramping ? percentage : (observedPercentage() ?? percentage), direction: direction, fine: command["fine"] as? Bool ?? false, supportsBoost: supportsBoost, boostEnabled: boostEnabled, allowBoostActivation: command["allowBoostActivation"] as? Bool ?? false)
                     set(next.percentage, activate: next.boostEnabled, keyboard: true)
                 }
             case "disable": disableSmoothly()
@@ -164,6 +168,8 @@ final class ColorBrightnessWorker {
     }
 
     private var boostEnabled = false
+    private var supportsBoost: Bool { panel?.readBrightnessState()?["supportsBoost"] as? Bool ?? lastKnownSupportsBoost }
+
 
     private func enable(at requested: Double? = nil, immediately: Bool = false) {
         if active {
@@ -172,17 +178,18 @@ final class ColorBrightnessWorker {
             return
         }
         do {
+            guard supportsBoost else { throw XDRFailure.message("This display does not support XDR boost.") }
             guard session == nil else { throw XDRFailure.message("Recovery is pending. Quit and reopen to retry.") }
             guard ProcessInfo.processInfo.thermalState == .nominal else { throw XDRFailure.message("Wait for the Mac to cool before boosting.") }
-            guard let state = panel.readBrightnessState(), let id = state["displayID"] as? UInt32,
+            guard let state = panel?.readBrightnessState(), let id = state["displayID"] as? UInt32,
                   let identity = state["identity"] as? String, let brightness = state["brightness"] as? Double,
                   let screen = screen(id), CGDisplayIsActive(id) != 0, CGDisplayIsInMirrorSet(id) == 0 else {
                 throw XDRFailure.message("An awake, unmirrored built-in display is required.")
             }
-            guard state["preset"] as? Int == 0 else { throw XDRFailure.message("Select Apple XDR Display (P3-1600 nits) to enable boost.") }
+            guard state["presetAllowsBoost"] as? Bool != false else { throw XDRFailure.message("Select an HDR-capable display preset that allows brightness adjustments.") }
             guard state["autoBrightness"] as? Bool != true else { throw XDRFailure.message("Turn off automatic brightness to use manual control.") }
             let original = try curve(id)
-            session = ColorSession(identity: identity, display: id, originalBrightness: Float(brightness), original: original)
+            session = ColorSession(identity: identity, display: id, originalPreset: state["preset"] as? Int, originalBrightness: Float(brightness), original: original)
             try persist()
             try anchor.start(screen: screen)
             active = true
@@ -215,9 +222,9 @@ final class ColorBrightnessWorker {
                 let progress = min(1, (now - rampStarted!) / (keyboardRamp ? 0.08 : 0.28))
                 let value = keyboardRamp ? from + (percentage - from) * progress : ControlPolicy.rampValue(from: from, to: percentage, progress: progress)
                 if session != nil { try apply(value) }
-                else { try panel.setBrightness(ColorPolicy.native(value)); appliedPercentage = value }
+                else { try panel?.setBrightness(ColorPolicy.native(value)); appliedPercentage = value }
                 if progress >= 1 {
-                    try panel.setBrightness(ColorPolicy.native(percentage))
+                    try panel?.setBrightness(ColorPolicy.native(percentage))
                     ramping = false
                     if percentage <= 100 {
                         try restore(restoringBrightness: false)
@@ -235,7 +242,7 @@ final class ColorBrightnessWorker {
     private func set(_ value: Double, activate: Bool = false, keyboard: Bool = false) {
         if keyboard && ramping && value == percentage { return }
         keyboardRamp = keyboard
-        guard value.isFinite, (0...160).contains(value) else { return }
+        guard panel != nil, value.isFinite, (0...(supportsBoost ? 160 : 100)).contains(value) else { return }
         if value > 100, activate, active { boostEnabled = true }
         if value > 100, !active {
             if activate { enable(at: value) }
@@ -257,8 +264,9 @@ final class ColorBrightnessWorker {
     }
 
     private func apply(_ value: Double) throws {
-        guard let old = session, let state = panel.readBrightnessState(), state["identity"] as? String == old.identity,
-              state["preset"] as? Int == 0 else { throw XDRFailure.message("Display configuration changed. Brightness released.") }
+        guard let old = session, let state = panel?.readBrightnessState(), state["identity"] as? String == old.identity,
+              state["presetAllowsBoost"] as? Bool != false,
+              old.originalPreset == nil || state["preset"] as? Int == old.originalPreset else { throw XDRFailure.message("Display configuration changed. Brightness released.") }
         let factor = ColorPolicy.factor(value)
         // Headroom can transiently report 1 while a native scalar change is
         // in flight. The curve readback below is the acceptance check; do not
@@ -269,7 +277,7 @@ final class ColorBrightnessWorker {
         try persist()
         // Remove software gain before lowering hardware brightness.
         if value <= 100 { try write(target, display: old.display) }
-        if abs((state["brightness"] as? Float ?? -1) - scalar) > 0.002 { try panel.setBrightness(scalar) }
+        if abs((state["brightness"] as? Float ?? -1) - scalar) > 0.002 { try panel?.setBrightness(scalar) }
         if value > 100 { try write(target, display: old.display) }
         guard try curve(old.display).matches(target) else { throw XDRFailure.message("macOS changed the brightness curve. Original settings restored.") }
         appliedPercentage = value
@@ -277,7 +285,7 @@ final class ColorBrightnessWorker {
 
     private func restore(restoringBrightness: Bool = true) throws {
         guard let old = session else { return }
-        guard let state = panel.readBrightnessState() else { throw XDRFailure.message("Display unavailable. Recovery has been retained.") }
+        guard let state = panel?.readBrightnessState() else { throw XDRFailure.message("Display unavailable. Recovery has been retained.") }
         if state["identity"] as? String == old.identity {
             let current = try curve(old.display)
             if [old.expected, old.previous].compactMap({ $0 }).contains(where: { current.matches($0) }) {
@@ -287,7 +295,7 @@ final class ColorBrightnessWorker {
                 guard try curve(old.display).matches(old.original) else { throw XDRFailure.message("Color restoration needs attention. Recovery has been retained.") }
             }
             if restoringBrightness, let expected = old.expectedBrightness, let actual = state["brightness"] as? Float, abs(actual - expected) < 0.005 {
-                try panel.setBrightness(old.originalBrightness)
+                try panel?.setBrightness(old.originalBrightness)
             }
         }
         try FileManager.default.removeItem(at: Self.journal)
@@ -302,12 +310,12 @@ final class ColorBrightnessWorker {
         catch { externalRecoveryError = error.localizedDescription }
         do {
             try restore()
-            if let minimumBrightness, let state = panel.readBrightnessState(),
+            if let minimumBrightness, let state = panel?.readBrightnessState(),
                let current = state["brightness"] as? Double, current < Double(minimumBrightness) {
-                try panel.setBrightness(minimumBrightness)
+                try panel?.setBrightness(minimumBrightness)
             }
             if releaseSurface { anchor.stop() }
-            if let state = panel.readBrightnessState(), let value = state["brightness"] as? Double { percentage = min(100, max(0, value * 100)) }
+            if let state = panel?.readBrightnessState(), let value = state["brightness"] as? Double { percentage = min(100, max(0, value * 100)) }
             send(externalRecoveryError == nil ? "off" : "error", externalRecoveryError ?? message)
         } catch { send("error", error.localizedDescription) }
     }
@@ -319,19 +327,31 @@ final class ColorBrightnessWorker {
     }
 
     private func tick() {
+        // A desktop Mac may have no internal panel, and a sleeping/clamshell
+        // panel can return later. Keep the external controller alive meanwhile.
+        let now = ProcessInfo.processInfo.systemUptime
+        if panel == nil && now >= nextPanelProbe {
+            nextPanelProbe = now + 2
+            panel = try? XDRNativePanel.open()
+            if panel != nil { send("off", "Native display control is available.") }
+        }
         if pauseReasons.isEmpty && ProcessInfo.processInfo.systemUptime - heartbeat > 4 { stop("Controller disconnected.", releaseSurface: true); exit(session == nil ? 0 : 2) }
         if active, let session, CGDisplayIsAsleep(session.display) != 0 || CGDisplayIsActive(session.display) == 0 {
             pauseForSleep(); return
         }
         if let target = pausedTarget {
             guard pauseReasons.isEmpty,
-                  let state = panel.readBrightnessState(), let id = state["displayID"] as? UInt32,
+                  let state = panel?.readBrightnessState(), let id = state["displayID"] as? UInt32,
                   CGDisplayIsAsleep(id) == 0, CGDisplayIsActive(id) != 0 else { return }
             do { try restore() } catch { return }
             pausedTarget = nil
             keyboardRamp = false
             enable(at: target)
             return
+        }
+        let native = panel?.readBrightnessState()
+        if (native != nil) != lastReportedNativeAvailable || (native?["supportsBoost"] as? Bool ?? lastKnownSupportsBoost) != lastKnownSupportsBoost {
+            send(active ? "active" : "off", "Display availability updated.")
         }
         guard !ramping, let current = observedPercentage() else { return }
         // Observe while off too. Readback never modifies the requested target
@@ -352,11 +372,15 @@ final class ColorBrightnessWorker {
         // Settled output above the normal range enables the global control,
         // including brightness already present when this process starts.
         // Do not undo an explicit off command during its downward animation.
-        if pausedTarget == nil && !ramping && state != "error" && current > 100.01 { boostEnabled = true }
+        let native = panel?.readBrightnessState()
+        if let supported = native?["supportsBoost"] as? Bool { lastKnownSupportsBoost = supported }
+        lastReportedNativeAvailable = native != nil
+        let canBoost = lastKnownSupportsBoost
+        if canBoost && pausedTarget == nil && !ramping && state != "error" && current > 100.01 { boostEnabled = true }
         lastReportedPercentage = current
         let payload: [String: Any] = ["state": state, "message": message, "percentage": current,
                                       "requestedPercentage": percentage, "requestID": requestID,
-                                      "boostEnabled": boostEnabled, "ramping": ramping, "prepared": false, "engine": "color-table-xdr-preset"]
+                                      "boostEnabled": boostEnabled && canBoost, "supportsBoost": canBoost, "nativeAvailable": native != nil, "ramping": ramping, "prepared": false, "engine": "color-table-xdr-preset"]
         if var data = try? JSONSerialization.data(withJSONObject: payload) {
             data.append(10); _ = data.withUnsafeBytes { Darwin.write(STDOUT_FILENO, $0.baseAddress, $0.count) }
         }

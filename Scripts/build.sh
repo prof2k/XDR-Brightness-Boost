@@ -37,8 +37,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>XDR Brightness Boost</string>
 <key>CFBundleDisplayName</key><string>XDR Brightness Boost</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.7.19</string>
-<key>CFBundleVersion</key><string>99</string>
+<key>CFBundleShortVersionString</key><string>0.7.20</string>
+<key>CFBundleVersion</key><string>100</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>LSUIElement</key><true/>
 <key>CFBundleIconFile</key><string>XDR Brightness Boost</string>
@@ -57,8 +57,8 @@ cat > "$helper/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>XDRBrightnessController</string>
 <key>CFBundleName</key><string>XDR Brightness Controller</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.7.19</string>
-<key>CFBundleVersion</key><string>99</string>
+<key>CFBundleShortVersionString</key><string>0.7.20</string>
+<key>CFBundleVersion</key><string>100</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>LSUIElement</key><true/>
 </dict></plist>

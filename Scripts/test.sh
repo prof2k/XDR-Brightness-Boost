@@ -23,3 +23,5 @@ xcrun swiftc -target arm64-apple-macos11.0 -parse-as-library -warnings-as-errors
 
 xcrun swiftc -target arm64-apple-macos11.0 -parse-as-library -warnings-as-errors -module-cache-path .build/module-cache Sources/KeyAccess.swift Tests/KeyAccessTests.swift -framework AppKit -o .build/key-access-tests
 .build/key-access-tests
+xcrun clang -target arm64-apple-macos11.0 -fobjc-arc -Wall -Wextra -Werror Tests/DisplayCapabilityTests.m Sources/NativePanel.m -framework AppKit -framework IOKit -o .build/display-capability-tests
+.build/display-capability-tests

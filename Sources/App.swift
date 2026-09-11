@@ -298,6 +298,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var externalPoll: Timer?
     private var selectedScreen: NSScreen? { NSScreen.screens.first { $0.brightnessDisplayID == selectedDisplay } }
     private var selectedIsBuiltin: Bool { selectedDisplay != 0 && CGDisplayIsBuiltin(selectedDisplay) != 0 }
+    private var selectedSupportsBoost: Bool { selectedIsBuiltin && builtinState["supportsBoost"] as? Bool == true }
+    private var nativeAvailable: Bool { worker?.isRunning == true && builtinState["nativeAvailable"] as? Bool == true }
 
     private let popover = NSPopover()
     private var popoverOutsideClickMonitor: Any?
@@ -732,16 +734,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         slider.cancelAnimation()
         slider.toolTip = nil
         refreshDisplayPicker()
-        slider.supportsBoost = selectedIsBuiltin
-        slider.setAccessibilityLabel(selectedIsBuiltin ? "Brightness, 0 to 160 percent" : "Brightness, 0 to 100 percent")
-        boostLabel?.stringValue = selectedIsBuiltin ? "Enable XDR boost" : "XDR boost unsupported"
-        toggle.isHidden = !selectedIsBuiltin
-        unsupportedIcon.isHidden = selectedIsBuiltin
-        toggle.isEnabled = selectedIsBuiltin && worker?.isRunning == true
-        enabled = selectedIsBuiltin && (builtinState["boostEnabled"] as? Bool ?? false)
+        slider.supportsBoost = selectedSupportsBoost
+        slider.setAccessibilityLabel(selectedSupportsBoost ? "Brightness, 0 to 160 percent" : "Brightness, 0 to 100 percent")
+        boostLabel?.stringValue = selectedSupportsBoost ? "Enable XDR boost" : "XDR boost unsupported"
+        toggle.isHidden = !selectedSupportsBoost
+        unsupportedIcon.isHidden = selectedSupportsBoost
+        toggle.isEnabled = selectedSupportsBoost && nativeAvailable
+        enabled = selectedSupportsBoost && (builtinState["boostEnabled"] as? Bool ?? false)
         toggle.state = enabled ? .on : .off
         if selectedIsBuiltin {
-            slider.isEnabled = worker?.isRunning == true
+            slider.isEnabled = nativeAvailable
             slider.percentage = builtinState["percentage"] as? Double ?? 100
         } else {
             let reading = externalBrightness.read(selectedDisplay)
@@ -770,7 +772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
         popover.performClose(nil)
         popupDisplay = selectedDisplay
-        brightnessPreview.show(near: anchor, screen: screen, percentage: slider.animationTarget ?? slider.percentage, supportsBoost: selectedIsBuiltin, controllable: slider.isEnabled)
+        brightnessPreview.show(near: anchor, screen: screen, percentage: slider.animationTarget ?? slider.percentage, supportsBoost: selectedSupportsBoost, controllable: slider.isEnabled)
     }
 
     @objc private func showSettings() {
@@ -914,7 +916,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                   let state = value["state"] as? String else { continue }
             if let requestID = value["requestID"] as? Int, !controlRevision.accepts(requestID) { continue }
+            let availabilityChanged = (builtinState["supportsBoost"] as? Bool != value["supportsBoost"] as? Bool) ||
+                (builtinState["nativeAvailable"] as? Bool != value["nativeAvailable"] as? Bool)
             builtinState = value
+            if availabilityChanged && selectedIsBuiltin { updateDisplayUI() }
             if let percentage = value["percentage"] as? Double {
                 actualBoosted = percentage > 100
                 updateMenuBarIcon()
@@ -923,8 +928,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             enabled = value["boostEnabled"] as? Bool ?? false
             if !slider.isTrackingPointer { setBoostToggle(enabled) }
             brightnessKeys.controlsBrightness = brightnessKeys.isAvailable
-            slider.isEnabled = worker?.isRunning == true
-            toggle.isEnabled = slider.isEnabled
+            slider.isEnabled = nativeAvailable
+            toggle.isEnabled = slider.isEnabled && selectedSupportsBoost
             let text = value["message"] as? String ?? ""
             lastStatus = text
             toggle.setAccessibilityHelp(state == "error" ? text : nil)
@@ -979,7 +984,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
         slider.showAdjustmentMarkers()
-        let next = ControlPolicy.keyTarget(slider.animationTarget ?? slider.percentage, direction: direction, fine: fine, supportsBoost: true, boostEnabled: enabled, allowBoostActivation: keysCanEnableBoost)
+        let next = ControlPolicy.keyTarget(slider.animationTarget ?? slider.percentage, direction: direction, fine: fine, supportsBoost: selectedSupportsBoost, boostEnabled: enabled, allowBoostActivation: keysCanEnableBoost)
         enabled = next.boostEnabled
         setBoostToggle(enabled)
         slider.animatePercentage(to: next.percentage)
@@ -1011,7 +1016,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func toggled() {
-        guard selectedIsBuiltin else { return }
+        guard selectedSupportsBoost else { return }
         if toggle.state == .on { brightnessKeys.connect(reclaim: true) }
         brightnessKeys.controlsBrightness = brightnessKeys.isAvailable
         if toggle.state == .on {
@@ -1038,7 +1043,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         awaitingSliderSettlement = true
         refreshPercentage()
         if !enabled { brightnessKeys.connect(reclaim: true) }
-        enabled = enabled || slider.percentage > 100
+        enabled = selectedSupportsBoost && (enabled || slider.percentage > 100)
         setBoostToggle(enabled)
         brightnessKeys.controlsBrightness = brightnessKeys.isAvailable
         remember(slider.percentage)

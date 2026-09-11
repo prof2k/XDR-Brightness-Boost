@@ -2,7 +2,7 @@
 
 Contributions to the original project code are provided under the [GNU General Public License v3.0](LICENSE), the same license as the project. Preserve the licenses and attribution of vendored code.
 
-Use the build and test commands in the README. Keep native display interfaces isolated and preserve explicit display targeting, ownership checks, recovery journals, and bounded retries. Do not expand the built-in model/OS allowlist without physical validation on that exact combination.
+Use the build and test commands in the README. Keep native display interfaces isolated and preserve explicit display targeting, ownership checks, recovery journals, and bounded retries. Keep XDR eligibility based on display capabilities rather than model names, OS build numbers, or fixed panel dimensions. Record physical validation separately from capability detection.
 
 For a bug report, include app version, Mac model, macOS build, monitor/connection type, reproduction steps, and whether other display controllers were running. Review diagnostic files for identifying information before sharing them. Never submit signing keys, certificates, or local recovery data.
 
